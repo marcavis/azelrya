@@ -1,0 +1,109 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="Azelrya.MainWindow"
+        Title="Azelrya"
+        KeyDown="MainWindow_OnKeyDown">
+    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="260,*">
+        <Menu Grid.Row="0" Grid.ColumnSpan="2">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New Map" Click="NewMapMenuItem_OnClick" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="ExitMenuItem_OnClick" />
+            </MenuItem>
+
+            <MenuItem Header="_Edit">
+                <MenuItem x:Name="UndoMenuItem"
+                          Header="_Undo"
+                          InputGesture="Ctrl+Z"
+                          IsEnabled="False"
+                          Click="UndoButton_OnClick" />
+                <MenuItem x:Name="RedoMenuItem"
+                          Header="_Redo"
+                          InputGesture="Ctrl+Y"
+                          IsEnabled="False"
+                          Click="RedoButton_OnClick" />
+            </MenuItem>
+
+            <MenuItem Header="_View">
+                <MenuItem Header="400% Zoom" Click="Zoom400MenuItem_OnClick" />
+                <MenuItem Header="300% Zoom" Click="Zoom300MenuItem_OnClick" />
+                <MenuItem Header="200% Zoom" Click="Zoom200MenuItem_OnClick" />
+                <MenuItem Header="100% Zoom" Click="Zoom100MenuItem_OnClick" />
+            </MenuItem>
+        </Menu>
+
+        <StackPanel Grid.Row="1" Grid.Column="0" Margin="16" Spacing="12">
+            <TextBlock Text="Azelrya" FontSize="24" FontWeight="Bold" />
+            <TextBlock Text="Palette" FontWeight="SemiBold" />
+
+            <RadioButton x:Name="LandColorButton"
+                         Content="Land (Green)"
+                         IsChecked="True"
+                         Checked="LandColorButton_OnChecked" />
+            <RadioButton x:Name="WaterColorButton"
+                         Content="Water (Blue)"
+                         Checked="WaterColorButton_OnChecked" />
+
+            <TextBlock Text="Brush Size" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <Slider x:Name="BrushSizeSlider"
+                    Minimum="1"
+                    Maximum="64"
+                    Value="12"
+                    TickFrequency="1"
+                    IsSnapToTickEnabled="True"
+                    ValueChanged="BrushSizeSlider_OnValueChanged" />
+            <TextBlock x:Name="BrushSizeText" Text="12 px" />
+
+            <Separator Margin="0,8,0,8" />
+
+            <Button Content="Import PNG" Click="ImportPngButton_OnClick" />
+            <Button Content="Export PNG" Click="ExportPngButton_OnClick" />
+            <Button Content="Clear to Water" Click="ClearButton_OnClick" />
+            <Button x:Name="UndoButton" Content="Undo" Click="UndoButton_OnClick" IsEnabled="False" />
+            <Button x:Name="RedoButton" Content="Redo" Click="RedoButton_OnClick" IsEnabled="False" />
+        </StackPanel>
+
+        <Border Grid.Row="1" Grid.Column="1" Margin="16" BorderThickness="1" Padding="8">
+            <ScrollViewer x:Name="MapScrollViewer"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid HorizontalAlignment="Left" VerticalAlignment="Top">
+                    <Image x:Name="MapImage"
+                              Stretch="Fill"
+                              RenderOptions.BitmapInterpolationMode="None"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Top" />
+
+                    <Canvas x:Name="PaintSurface"
+                            Background="Transparent"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            PointerPressed="PaintSurface_OnPointerPressed"
+                            PointerMoved="PaintSurface_OnPointerMoved"
+                            PointerReleased="PaintSurface_OnPointerReleased"
+                            PointerEntered="PaintSurface_OnPointerEntered"
+                            PointerExited="PaintSurface_OnPointerExited">
+                        <Ellipse x:Name="BrushPreview"
+                                 IsVisible="False"
+                                 IsHitTestVisible="False"
+                                 Stroke="White"
+                                 StrokeThickness="1"
+                                 Fill="Transparent"
+                                 Width="12"
+                                 Height="12" />
+                    </Canvas>
+                </Grid>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="2" Grid.ColumnSpan="2" BorderThickness="1,1,1,0" Padding="8,4">
+            <DockPanel>
+                <TextBlock x:Name="ZoomStatusText" DockPanel.Dock="Right" Text="Zoom: 100%" HorizontalAlignment="Right" />
+                <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
