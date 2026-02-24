@@ -56,4 +56,4 @@ This project was developed with assistance from GitHub Copilot.
 
 ## License
 
-No license has been specified yet.
+MIT. See [LICENSE](LICENSE).

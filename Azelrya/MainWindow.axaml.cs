@@ -25,10 +25,21 @@ public partial class MainWindow : Window
     private static readonly AvaloniaColor WaterColor = AvaloniaColor.FromRgb(70, 130, 180);
     private const double MinZoom = 1.0;
     private const double MaxZoom = 4.0;
+    private const byte MinElevationShade = 48;
+    private const byte MaxElevationShade = 235;
+    private const int ElevationStep = 4;
+
+    private enum MapLayer
+    {
+        Elevation,
+        BaseTerrain
+    }
 
     private int _mapWidth = 512;
     private int _mapHeight = 512;
-    private byte[] _pixels = [];
+    private byte[] _terrainPixels = [];
+    private byte[] _displayPixels = [];
+    private byte[] _elevation = [];
     private WriteableBitmap? _bitmap;
     private bool _isPainting;
     private double _zoomScale = 1.0;
@@ -36,12 +47,15 @@ public partial class MainWindow : Window
     private readonly Stack<MapState> _undoStates = new();
     private readonly Stack<MapState> _redoStates = new();
     private readonly int _historyLimit;
+    private MapLayer _activeLayer = MapLayer.BaseTerrain;
+    private int _elevationDirection;
 
     private sealed class MapState
     {
         public required int Width { get; init; }
         public required int Height { get; init; }
-        public required byte[] Pixels { get; init; }
+        public required byte[] TerrainPixels { get; init; }
+        public required byte[] Elevation { get; init; }
     }
 
     public MainWindow()
@@ -52,6 +66,7 @@ public partial class MainWindow : Window
         InitializeMap(_mapWidth, _mapHeight, WaterColor);
         UpdateBrushSizeText();
         UpdateZoomStatusText();
+        UpdateLayerOptions();
         UpdateHistoryButtons();
         StatusText.Text = $"Ready (history limit: {_historyLimit})";
     }
@@ -62,7 +77,9 @@ public partial class MainWindow : Window
     {
         _mapWidth = width;
         _mapHeight = height;
-        _pixels = new byte[_mapWidth * _mapHeight * 4];
+        _terrainPixels = new byte[_mapWidth * _mapHeight * 4];
+        _displayPixels = new byte[_mapWidth * _mapHeight * 4];
+        _elevation = new byte[_mapWidth * _mapHeight];
 
         FillAll(fillColor);
         _bitmap = new WriteableBitmap(
@@ -73,7 +90,7 @@ public partial class MainWindow : Window
 
         MapImage.Source = _bitmap;
         ApplyZoomLayout();
-        SyncBitmapFromPixels();
+        RenderActiveLayer();
     }
 
     private void ApplyZoomLayout()
@@ -108,16 +125,18 @@ public partial class MainWindow : Window
 
     private void FillAll(AvaloniaColor color)
     {
-        for (var i = 0; i < _pixels.Length; i += 4)
+        for (var i = 0; i < _terrainPixels.Length; i += 4)
         {
-            _pixels[i] = color.B;
-            _pixels[i + 1] = color.G;
-            _pixels[i + 2] = color.R;
-            _pixels[i + 3] = 255;
+            _terrainPixels[i] = color.B;
+            _terrainPixels[i + 1] = color.G;
+            _terrainPixels[i + 2] = color.R;
+            _terrainPixels[i + 3] = 255;
         }
+
+        Array.Fill(_elevation, (byte)0);
     }
 
-    private void SetPixel(int x, int y, AvaloniaColor color)
+    private void SetTerrainPixel(int x, int y, AvaloniaColor color)
     {
         if (x < 0 || y < 0 || x >= _mapWidth || y >= _mapHeight)
         {
@@ -125,13 +144,50 @@ public partial class MainWindow : Window
         }
 
         var index = (y * _mapWidth + x) * 4;
-        _pixels[index] = color.B;
-        _pixels[index + 1] = color.G;
-        _pixels[index + 2] = color.R;
-        _pixels[index + 3] = 255;
+        _terrainPixels[index] = color.B;
+        _terrainPixels[index + 1] = color.G;
+        _terrainPixels[index + 2] = color.R;
+        _terrainPixels[index + 3] = 255;
+
+        if (color.B == WaterColor.B && color.G == WaterColor.G && color.R == WaterColor.R)
+        {
+            _elevation[y * _mapWidth + x] = 0;
+        }
     }
 
-    private void PaintCircle(int centerX, int centerY)
+    private static byte ElevationToShade(byte elevation)
+    {
+        return (byte)(MinElevationShade + elevation * (MaxElevationShade - MinElevationShade) / 255);
+    }
+
+    private static bool IsColor(byte[] pixels, int colorIndex, AvaloniaColor color)
+    {
+        return pixels[colorIndex] == color.B &&
+               pixels[colorIndex + 1] == color.G &&
+               pixels[colorIndex + 2] == color.R;
+    }
+
+    private bool IsLandAt(int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= _mapWidth || y >= _mapHeight)
+        {
+            return false;
+        }
+
+        var colorIndex = (y * _mapWidth + x) * 4;
+        return !IsColor(_terrainPixels, colorIndex, WaterColor);
+    }
+
+    private void SetDisplayPixel(int x, int y, AvaloniaColor color)
+    {
+        var index = (y * _mapWidth + x) * 4;
+        _displayPixels[index] = color.B;
+        _displayPixels[index + 1] = color.G;
+        _displayPixels[index + 2] = color.R;
+        _displayPixels[index + 3] = 255;
+    }
+
+    private void PaintTerrainCircle(int centerX, int centerY)
     {
         var radius = BrushSize / 2;
         var radiusSquared = radius * radius;
@@ -144,8 +200,71 @@ public partial class MainWindow : Window
                 var dy = y - centerY;
                 if (dx * dx + dy * dy <= radiusSquared)
                 {
-                    SetPixel(x, y, _selectedColor);
+                    SetTerrainPixel(x, y, _selectedColor);
                 }
+            }
+        }
+
+        RenderActiveLayer();
+    }
+
+    private void PaintElevationCircle(int centerX, int centerY, int direction)
+    {
+        if (direction == 0)
+        {
+            return;
+        }
+
+        var radius = BrushSize / 2;
+        var radiusSquared = radius * radius;
+
+        for (var y = centerY - radius; y <= centerY + radius; y++)
+        {
+            for (var x = centerX - radius; x <= centerX + radius; x++)
+            {
+                if (x < 0 || y < 0 || x >= _mapWidth || y >= _mapHeight)
+                {
+                    continue;
+                }
+
+                var dx = x - centerX;
+                var dy = y - centerY;
+                if (dx * dx + dy * dy > radiusSquared || !IsLandAt(x, y))
+                {
+                    continue;
+                }
+
+                var elevationIndex = y * _mapWidth + x;
+                var updated = Math.Clamp(_elevation[elevationIndex] + direction * ElevationStep, 0, 255);
+                _elevation[elevationIndex] = (byte)updated;
+            }
+        }
+
+        RenderActiveLayer();
+    }
+
+    private void RenderActiveLayer()
+    {
+        if (_activeLayer == MapLayer.BaseTerrain)
+        {
+            Buffer.BlockCopy(_terrainPixels, 0, _displayPixels, 0, _terrainPixels.Length);
+            SyncBitmapFromPixels();
+            return;
+        }
+
+        for (var y = 0; y < _mapHeight; y++)
+        {
+            for (var x = 0; x < _mapWidth; x++)
+            {
+                if (!IsLandAt(x, y))
+                {
+                    SetDisplayPixel(x, y, WaterColor);
+                    continue;
+                }
+
+                var elevation = _elevation[y * _mapWidth + x];
+                var shade = ElevationToShade(elevation);
+                SetDisplayPixel(x, y, AvaloniaColor.FromRgb(shade, shade, shade));
             }
         }
 
@@ -165,7 +284,7 @@ public partial class MainWindow : Window
         {
             var sourceOffset = y * stride;
             var destinationPtr = framebuffer.Address + y * framebuffer.RowBytes;
-            Marshal.Copy(_pixels, sourceOffset, destinationPtr, stride);
+            Marshal.Copy(_displayPixels, sourceOffset, destinationPtr, stride);
         }
 
         MapImage.InvalidateVisual();
@@ -210,7 +329,8 @@ public partial class MainWindow : Window
         {
             Width = _mapWidth,
             Height = _mapHeight,
-            Pixels = (byte[])_pixels.Clone()
+            TerrainPixels = (byte[])_terrainPixels.Clone(),
+            Elevation = (byte[])_elevation.Clone()
         };
     }
 
@@ -221,8 +341,9 @@ public partial class MainWindow : Window
             InitializeMap(state.Width, state.Height, WaterColor);
         }
 
-        _pixels = (byte[])state.Pixels.Clone();
-        SyncBitmapFromPixels();
+        _terrainPixels = (byte[])state.TerrainPixels.Clone();
+        _elevation = (byte[])state.Elevation.Clone();
+        RenderActiveLayer();
     }
 
     private void PushUndoState()
@@ -333,15 +454,16 @@ public partial class MainWindow : Window
                 {
                     var pixel = row[x];
                     var index = (y * _mapWidth + x) * 4;
-                    _pixels[index] = pixel.B;
-                    _pixels[index + 1] = pixel.G;
-                    _pixels[index + 2] = pixel.R;
-                    _pixels[index + 3] = 255;
+                    _terrainPixels[index] = pixel.B;
+                    _terrainPixels[index + 1] = pixel.G;
+                    _terrainPixels[index + 2] = pixel.R;
+                    _terrainPixels[index + 3] = 255;
                 }
             }
         });
 
-        SyncBitmapFromPixels();
+        Array.Fill(_elevation, (byte)0);
+        RenderActiveLayer();
         StatusText.Text = $"Imported {_mapWidth}x{_mapHeight} PNG";
     }
 
@@ -371,7 +493,7 @@ public partial class MainWindow : Window
         }
 
         await using var stream = await file.OpenWriteAsync();
-        using var image = ImageSharpImage.LoadPixelData<Bgra32>(_pixels, _mapWidth, _mapHeight);
+        using var image = ImageSharpImage.LoadPixelData<Bgra32>(_terrainPixels, _mapWidth, _mapHeight);
         await image.SaveAsync(stream, new PngEncoder());
 
         StatusText.Text = "PNG exported";
@@ -379,13 +501,20 @@ public partial class MainWindow : Window
 
     private void PaintSurface_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.GetCurrentPoint(PaintSurface).Properties.IsLeftButtonPressed is false)
+        var properties = e.GetCurrentPoint(PaintSurface).Properties;
+        if (_activeLayer == MapLayer.BaseTerrain && !properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        if (_activeLayer == MapLayer.Elevation && !properties.IsLeftButtonPressed && !properties.IsRightButtonPressed)
         {
             return;
         }
 
         PushUndoState();
         _isPainting = true;
+        _elevationDirection = properties.IsLeftButtonPressed ? 1 : properties.IsRightButtonPressed ? -1 : 0;
         BrushPreview.IsVisible = true;
         e.Pointer.Capture(PaintSurface);
         PaintAtPointer(e);
@@ -395,6 +524,7 @@ public partial class MainWindow : Window
     {
         var point = e.GetPosition(PaintSurface);
         UpdateBrushPreview(point);
+        UpdateCursorStatusAtPoint(point);
 
         if (!_isPainting)
         {
@@ -407,6 +537,7 @@ public partial class MainWindow : Window
     private void PaintSurface_OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
         _isPainting = false;
+        _elevationDirection = 0;
         e.Pointer.Capture(null);
     }
 
@@ -415,18 +546,22 @@ public partial class MainWindow : Window
         BrushPreview.IsVisible = true;
         var point = e.GetPosition(PaintSurface);
         UpdateBrushPreview(point);
+        UpdateCursorStatusAtPoint(point);
     }
 
     private void PaintSurface_OnPointerExited(object? sender, PointerEventArgs e)
     {
         BrushPreview.IsVisible = false;
         _isPainting = false;
+        _elevationDirection = 0;
+        SetCursorStatusUnknown();
     }
 
     private void PaintAtPointer(PointerEventArgs e)
     {
         var point = e.GetPosition(PaintSurface);
         UpdateBrushPreview(point);
+        UpdateCursorStatusAtPoint(point);
 
         var pixel = TryGetPixelFromPoint(point);
         if (pixel is null)
@@ -434,7 +569,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        PaintCircle(pixel.Value.x, pixel.Value.y);
+        if (_activeLayer == MapLayer.BaseTerrain)
+        {
+            PaintTerrainCircle(pixel.Value.x, pixel.Value.y);
+            return;
+        }
+
+        var properties = e.GetCurrentPoint(PaintSurface).Properties;
+        var direction = properties.IsLeftButtonPressed ? 1 : properties.IsRightButtonPressed ? -1 : _elevationDirection;
+        PaintElevationCircle(pixel.Value.x, pixel.Value.y, direction);
     }
 
     private void BrushSizeSlider_OnValueChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -477,8 +620,66 @@ public partial class MainWindow : Window
     {
         PushUndoState();
         FillAll(WaterColor);
-        SyncBitmapFromPixels();
+        RenderActiveLayer();
         StatusText.Text = "Canvas cleared to water";
+    }
+
+    private void ElevationLayerButton_OnChecked(object? sender, RoutedEventArgs e)
+    {
+        _activeLayer = MapLayer.Elevation;
+        UpdateLayerOptions();
+        RenderActiveLayer();
+        SetCursorStatusUnknown();
+        StatusText.Text = "Elevation layer selected";
+    }
+
+    private void BaseTerrainLayerButton_OnChecked(object? sender, RoutedEventArgs e)
+    {
+        _activeLayer = MapLayer.BaseTerrain;
+        UpdateLayerOptions();
+        RenderActiveLayer();
+        SetCursorStatusUnknown();
+        StatusText.Text = "Base terrain layer selected";
+    }
+
+    private void UpdateLayerOptions()
+    {
+        var isTerrain = _activeLayer == MapLayer.BaseTerrain;
+        TerrainOptionsPanel.IsVisible = isTerrain;
+        ElevationOptionsPanel.IsVisible = !isTerrain;
+    }
+
+    private void UpdateCursorStatusAtPoint(AvaloniaPoint point)
+    {
+        var pixel = TryGetPixelFromPoint(point);
+        if (pixel is null)
+        {
+            SetCursorStatusUnknown();
+            return;
+        }
+
+        var x = pixel.Value.x;
+        var y = pixel.Value.y;
+        CursorPositionText.Text = $"Cursor: {x},{y}";
+
+        if (!IsLandAt(x, y))
+        {
+            CursorTerrainText.Text = "Water";
+            CursorElevationText.Text = "Elevation: N/A";
+            return;
+        }
+
+        var value = _elevation[y * _mapWidth + x];
+        var percent = (int)Math.Round(value / 255.0 * 100.0);
+        CursorTerrainText.Text = "Land";
+        CursorElevationText.Text = $"Elevation: {value} ({percent}%)";
+    }
+
+    private void SetCursorStatusUnknown()
+    {
+        CursorPositionText.Text = "Cursor: --";
+        CursorTerrainText.Text = "--";
+        CursorElevationText.Text = "Elevation: --";
     }
 
     private void MainWindow_OnKeyDown(object? sender, KeyEventArgs e)

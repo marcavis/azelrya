@@ -6,8 +6,8 @@
         x:Class="Azelrya.MainWindow"
         Title="Azelrya"
         KeyDown="MainWindow_OnKeyDown">
-    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="260,*">
-        <Menu Grid.Row="0" Grid.ColumnSpan="2">
+    <Grid RowDefinitions="Auto,*,Auto" ColumnDefinitions="260,*,220">
+        <Menu Grid.Row="0" Grid.ColumnSpan="3">
             <MenuItem Header="_File">
                 <MenuItem Header="_New Map" Click="NewMapMenuItem_OnClick" />
                 <Separator />
@@ -37,15 +37,26 @@
 
         <StackPanel Grid.Row="1" Grid.Column="0" Margin="16" Spacing="12">
             <TextBlock Text="Azelrya" FontSize="24" FontWeight="Bold" />
-            <TextBlock Text="Palette" FontWeight="SemiBold" />
+            <TextBlock Text="Layer Options" FontWeight="SemiBold" />
 
-            <RadioButton x:Name="LandColorButton"
-                         Content="Land (Green)"
-                         IsChecked="True"
-                         Checked="LandColorButton_OnChecked" />
-            <RadioButton x:Name="WaterColorButton"
-                         Content="Water (Blue)"
-                         Checked="WaterColorButton_OnChecked" />
+            <StackPanel x:Name="TerrainOptionsPanel" Spacing="8">
+                <TextBlock Text="Palette" FontWeight="SemiBold" />
+                <RadioButton x:Name="LandColorButton"
+                             Content="Land (Green)"
+                             IsChecked="True"
+                             Checked="LandColorButton_OnChecked" />
+                <RadioButton x:Name="WaterColorButton"
+                             Content="Water (Blue)"
+                             Checked="WaterColorButton_OnChecked" />
+            </StackPanel>
+
+            <StackPanel x:Name="ElevationOptionsPanel" Spacing="8" IsVisible="False">
+                <TextBlock Text="Elevation Paint" FontWeight="SemiBold" />
+                <TextBlock Text="Left-click/hold: increase elevation"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="Right-click/hold: decrease elevation"
+                           TextWrapping="Wrap" />
+            </StackPanel>
 
             <TextBlock Text="Brush Size" FontWeight="SemiBold" Margin="0,8,0,0" />
             <Slider x:Name="BrushSizeSlider"
@@ -99,9 +110,40 @@
             </ScrollViewer>
         </Border>
 
-        <Border Grid.Row="2" Grid.ColumnSpan="2" BorderThickness="1,1,1,0" Padding="8,4">
+        <StackPanel Grid.Row="1" Grid.Column="2" Margin="16" Spacing="10">
+            <TextBlock Text="Layers" FontWeight="SemiBold" />
+            <RadioButton x:Name="ElevationLayerButton"
+                         Content="Elevation"
+                         Checked="ElevationLayerButton_OnChecked" />
+            <RadioButton x:Name="BaseTerrainLayerButton"
+                         Content="Base Terrain"
+                         IsChecked="True"
+                         Checked="BaseTerrainLayerButton_OnChecked" />
+        </StackPanel>
+
+        <Border Grid.Row="2" Grid.ColumnSpan="3" BorderThickness="1,1,1,0" Padding="8,4">
             <DockPanel>
                 <TextBlock x:Name="ZoomStatusText" DockPanel.Dock="Right" Text="Zoom: 100%" HorizontalAlignment="Right" />
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            Margin="0,0,16,0"
+                            Spacing="8"
+                            HorizontalAlignment="Right">
+                    <TextBlock x:Name="CursorPositionText"
+                               Width="110"
+                               TextAlignment="Left"
+                               Text="Cursor: --" />
+                    <TextBlock Text="|" />
+                    <TextBlock x:Name="CursorTerrainText"
+                               Width="55"
+                               TextAlignment="Left"
+                               Text="--" />
+                    <TextBlock Text="|" />
+                    <TextBlock x:Name="CursorElevationText"
+                               Width="130"
+                               TextAlignment="Left"
+                               Text="Elevation: --" />
+                </StackPanel>
                 <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" />
             </DockPanel>
         </Border>
