@@ -23,14 +23,21 @@ public partial class MainWindow : Window
 {
     private static readonly AvaloniaColor LandColor = AvaloniaColor.FromRgb(34, 139, 34);
     private static readonly AvaloniaColor WaterColor = AvaloniaColor.FromRgb(70, 130, 180);
+    private static readonly AvaloniaColor RiverColor = AvaloniaColor.FromRgb(30, 144, 255);
     private const double MinZoom = 1.0;
     private const double MaxZoom = 4.0;
     private const byte MinElevationShade = 48;
     private const byte MaxElevationShade = 235;
     private const int ElevationStep = 4;
+    private static readonly (int dx, int dy)[] NeighborOffsets =
+    [
+        (0, -1), (1, -1), (1, 0), (1, 1),
+        (0, 1), (-1, 1), (-1, 0), (-1, -1)
+    ];
 
     private enum MapLayer
     {
+        Rivers,
         Elevation,
         BaseTerrain
     }
@@ -40,6 +47,7 @@ public partial class MainWindow : Window
     private byte[] _terrainPixels = [];
     private byte[] _displayPixels = [];
     private byte[] _elevation = [];
+    private byte[] _riverMask = [];
     private WriteableBitmap? _bitmap;
     private bool _isPainting;
     private double _zoomScale = 1.0;
@@ -56,6 +64,7 @@ public partial class MainWindow : Window
         public required int Height { get; init; }
         public required byte[] TerrainPixels { get; init; }
         public required byte[] Elevation { get; init; }
+        public required byte[] RiverMask { get; init; }
     }
 
     public MainWindow()
@@ -80,6 +89,7 @@ public partial class MainWindow : Window
         _terrainPixels = new byte[_mapWidth * _mapHeight * 4];
         _displayPixels = new byte[_mapWidth * _mapHeight * 4];
         _elevation = new byte[_mapWidth * _mapHeight];
+        _riverMask = new byte[_mapWidth * _mapHeight];
 
         FillAll(fillColor);
         _bitmap = new WriteableBitmap(
@@ -134,6 +144,7 @@ public partial class MainWindow : Window
         }
 
         Array.Fill(_elevation, (byte)0);
+        Array.Fill(_riverMask, (byte)0);
     }
 
     private void SetTerrainPixel(int x, int y, AvaloniaColor color)
@@ -151,7 +162,9 @@ public partial class MainWindow : Window
 
         if (color.B == WaterColor.B && color.G == WaterColor.G && color.R == WaterColor.R)
         {
-            _elevation[y * _mapWidth + x] = 0;
+            var cellIndex = y * _mapWidth + x;
+            _elevation[cellIndex] = 0;
+            _riverMask[cellIndex] = 0;
         }
     }
 
@@ -176,6 +189,11 @@ public partial class MainWindow : Window
 
         var colorIndex = (y * _mapWidth + x) * 4;
         return !IsColor(_terrainPixels, colorIndex, WaterColor);
+    }
+
+    private bool IsWaterAt(int x, int y)
+    {
+        return !IsLandAt(x, y);
     }
 
     private void SetDisplayPixel(int x, int y, AvaloniaColor color)
@@ -243,11 +261,134 @@ public partial class MainWindow : Window
         RenderActiveLayer();
     }
 
+    private bool IsAdjacentToWater(int x, int y)
+    {
+        foreach (var (dx, dy) in NeighborOffsets)
+        {
+            var nx = x + dx;
+            var ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= _mapWidth || ny >= _mapHeight)
+            {
+                continue;
+            }
+
+            if (IsWaterAt(nx, ny))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void PlaceRiverSource(int sourceX, int sourceY)
+    {
+        if (!IsLandAt(sourceX, sourceY))
+        {
+            StatusText.Text = "River source must be placed on land";
+            return;
+        }
+
+        var visited = new HashSet<int>();
+        var x = sourceX;
+        var y = sourceY;
+        var maxSteps = _mapWidth * _mapHeight;
+
+        for (var step = 0; step < maxSteps; step++)
+        {
+            var index = y * _mapWidth + x;
+            if (!visited.Add(index))
+            {
+                break;
+            }
+
+            _riverMask[index] = 1;
+
+            if (IsAdjacentToWater(x, y))
+            {
+                break;
+            }
+
+            var currentElevation = _elevation[index];
+            (int x, int y, byte elevation)? bestDownhill = null;
+            (int x, int y, byte elevation)? bestFallback = null;
+
+            foreach (var (dx, dy) in NeighborOffsets)
+            {
+                var nx = x + dx;
+                var ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= _mapWidth || ny >= _mapHeight)
+                {
+                    continue;
+                }
+
+                if (!IsLandAt(nx, ny))
+                {
+                    continue;
+                }
+
+                var neighborIndex = ny * _mapWidth + nx;
+                if (visited.Contains(neighborIndex))
+                {
+                    continue;
+                }
+
+                var neighborElevation = _elevation[neighborIndex];
+                if (neighborElevation < currentElevation)
+                {
+                    if (!bestDownhill.HasValue || neighborElevation < bestDownhill.Value.elevation)
+                    {
+                        bestDownhill = (nx, ny, neighborElevation);
+                    }
+
+                    continue;
+                }
+
+                if (!bestFallback.HasValue || neighborElevation < bestFallback.Value.elevation)
+                {
+                    bestFallback = (nx, ny, neighborElevation);
+                }
+            }
+
+            var next = bestDownhill ?? bestFallback;
+            if (!next.HasValue)
+            {
+                break;
+            }
+
+            x = next.Value.x;
+            y = next.Value.y;
+        }
+
+        RenderActiveLayer();
+        StatusText.Text = $"River source placed at {sourceX},{sourceY}";
+    }
+
     private void RenderActiveLayer()
     {
         if (_activeLayer == MapLayer.BaseTerrain)
         {
             Buffer.BlockCopy(_terrainPixels, 0, _displayPixels, 0, _terrainPixels.Length);
+            SyncBitmapFromPixels();
+            return;
+        }
+
+        if (_activeLayer == MapLayer.Rivers)
+        {
+            Buffer.BlockCopy(_terrainPixels, 0, _displayPixels, 0, _terrainPixels.Length);
+
+            for (var y = 0; y < _mapHeight; y++)
+            {
+                for (var x = 0; x < _mapWidth; x++)
+                {
+                    var index = y * _mapWidth + x;
+                    if (_riverMask[index] == 1 && IsLandAt(x, y))
+                    {
+                        SetDisplayPixel(x, y, RiverColor);
+                    }
+                }
+            }
+
             SyncBitmapFromPixels();
             return;
         }
@@ -330,7 +471,8 @@ public partial class MainWindow : Window
             Width = _mapWidth,
             Height = _mapHeight,
             TerrainPixels = (byte[])_terrainPixels.Clone(),
-            Elevation = (byte[])_elevation.Clone()
+            Elevation = (byte[])_elevation.Clone(),
+            RiverMask = (byte[])_riverMask.Clone()
         };
     }
 
@@ -343,6 +485,7 @@ public partial class MainWindow : Window
 
         _terrainPixels = (byte[])state.TerrainPixels.Clone();
         _elevation = (byte[])state.Elevation.Clone();
+        _riverMask = (byte[])state.RiverMask.Clone();
         RenderActiveLayer();
     }
 
@@ -463,6 +606,7 @@ public partial class MainWindow : Window
         });
 
         Array.Fill(_elevation, (byte)0);
+        Array.Fill(_riverMask, (byte)0);
         RenderActiveLayer();
         StatusText.Text = $"Imported {_mapWidth}x{_mapHeight} PNG";
     }
@@ -502,6 +646,32 @@ public partial class MainWindow : Window
     private void PaintSurface_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         var properties = e.GetCurrentPoint(PaintSurface).Properties;
+
+        if (_activeLayer == MapLayer.Rivers)
+        {
+            if (!properties.IsLeftButtonPressed)
+            {
+                return;
+            }
+
+            var point = e.GetPosition(PaintSurface);
+            var pixel = TryGetPixelFromPoint(point);
+            if (pixel is null)
+            {
+                return;
+            }
+
+            if (!IsLandAt(pixel.Value.x, pixel.Value.y))
+            {
+                StatusText.Text = "River source must be placed on land";
+                return;
+            }
+
+            PushUndoState();
+            PlaceRiverSource(pixel.Value.x, pixel.Value.y);
+            return;
+        }
+
         if (_activeLayer == MapLayer.BaseTerrain && !properties.IsLeftButtonPressed)
         {
             return;
@@ -543,9 +713,13 @@ public partial class MainWindow : Window
 
     private void PaintSurface_OnPointerEntered(object? sender, PointerEventArgs e)
     {
-        BrushPreview.IsVisible = true;
         var point = e.GetPosition(PaintSurface);
-        UpdateBrushPreview(point);
+        if (_activeLayer != MapLayer.Rivers)
+        {
+            BrushPreview.IsVisible = true;
+            UpdateBrushPreview(point);
+        }
+
         UpdateCursorStatusAtPoint(point);
     }
 
@@ -633,6 +807,15 @@ public partial class MainWindow : Window
         StatusText.Text = "Elevation layer selected";
     }
 
+    private void RiversLayerButton_OnChecked(object? sender, RoutedEventArgs e)
+    {
+        _activeLayer = MapLayer.Rivers;
+        UpdateLayerOptions();
+        RenderActiveLayer();
+        SetCursorStatusUnknown();
+        StatusText.Text = "Rivers layer selected";
+    }
+
     private void BaseTerrainLayerButton_OnChecked(object? sender, RoutedEventArgs e)
     {
         _activeLayer = MapLayer.BaseTerrain;
@@ -645,8 +828,16 @@ public partial class MainWindow : Window
     private void UpdateLayerOptions()
     {
         var isTerrain = _activeLayer == MapLayer.BaseTerrain;
+        var isElevation = _activeLayer == MapLayer.Elevation;
+        var isRivers = _activeLayer == MapLayer.Rivers;
         TerrainOptionsPanel.IsVisible = isTerrain;
-        ElevationOptionsPanel.IsVisible = !isTerrain;
+        ElevationOptionsPanel.IsVisible = isElevation;
+        RiversOptionsPanel.IsVisible = isRivers;
+        BrushOptionsPanel.IsVisible = !isRivers;
+        if (isRivers)
+        {
+            BrushPreview.IsVisible = false;
+        }
     }
 
     private void UpdateCursorStatusAtPoint(AvaloniaPoint point)

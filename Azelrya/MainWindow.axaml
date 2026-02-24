@@ -58,15 +58,27 @@
                            TextWrapping="Wrap" />
             </StackPanel>
 
-            <TextBlock Text="Brush Size" FontWeight="SemiBold" Margin="0,8,0,0" />
-            <Slider x:Name="BrushSizeSlider"
-                    Minimum="1"
-                    Maximum="64"
-                    Value="12"
-                    TickFrequency="1"
-                    IsSnapToTickEnabled="True"
-                    ValueChanged="BrushSizeSlider_OnValueChanged" />
-            <TextBlock x:Name="BrushSizeText" Text="12 px" />
+            <StackPanel x:Name="RiversOptionsPanel" Spacing="8" IsVisible="False">
+                <TextBlock Text="Rivers" FontWeight="SemiBold" />
+                <TextBlock Text="Left-click: place river source"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="River path is auto-calculated from elevation until water"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="Sources can only be placed on land"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <StackPanel x:Name="BrushOptionsPanel" Spacing="4">
+                <TextBlock Text="Brush Size" FontWeight="SemiBold" Margin="0,8,0,0" />
+                <Slider x:Name="BrushSizeSlider"
+                        Minimum="1"
+                        Maximum="64"
+                        Value="12"
+                        TickFrequency="1"
+                        IsSnapToTickEnabled="True"
+                        ValueChanged="BrushSizeSlider_OnValueChanged" />
+                <TextBlock x:Name="BrushSizeText" Text="12 px" />
+            </StackPanel>
 
             <Separator Margin="0,8,0,8" />
 
@@ -112,6 +124,9 @@
 
         <StackPanel Grid.Row="1" Grid.Column="2" Margin="16" Spacing="10">
             <TextBlock Text="Layers" FontWeight="SemiBold" />
+            <RadioButton x:Name="RiversLayerButton"
+                         Content="Rivers"
+                         Checked="RiversLayerButton_OnChecked" />
             <RadioButton x:Name="ElevationLayerButton"
                          Content="Elevation"
                          Checked="ElevationLayerButton_OnChecked" />
